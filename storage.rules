@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthed() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    function isOwner(uid) { return isAuthed() && request.auth.uid == uid; }
+    function isAdmin() { return isAuthed() && request.auth.token.admin == true; }
+
+    // User avatars & personal uploads
+    match /user_uploads/{uid}/{file=**} {
+      // make read true if avatars should be public
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid)
+                   && request.resource.size < 5 * 1024 * 1024 // 5MB
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Public assets (group/challenge images curated by admins)
+    match /public_assets/{file=**} {
+      allow read: if true;
+      allow write: if isAdmin()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('(image|video)/.*');
+    }
+
+    // Default deny
+    match /{path=**} { allow read, write: if false; }
+  }
+}

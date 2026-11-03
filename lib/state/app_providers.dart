@@ -1,0 +1,22 @@
+// lib/state/app_providers.dart
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/demo.dart';
+import '../data/services/compute_service.dart';
+
+/// Auth user stream (global)
+final authUserProvider = StreamProvider<User?>(
+      (ref) => authChanges(),
+);
+
+/// Current UID (nullable)
+final currentUserIdProvider = Provider<String?>((ref) {
+  final user = ref.watch(authUserProvider).value;
+  return user?.uid;
+});
+
+/// Compute service DI
+final computeServiceProvider = Provider<ComputeService>(
+      (ref) => const HttpComputeService(),
+);

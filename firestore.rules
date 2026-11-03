@@ -1,0 +1,336 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ---------- Helpers ---------- */
+    function isAuthed() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    function isOwner(uid) { return isAuthed() && request.auth.uid == uid; }
+    function isAdmin() { return isAuthed() && request.auth.token.admin == true; }
+
+    function has(field) { return field in request.resource.data; }
+    function isNull(field) { return has(field) && request.resource.data[field] == null; }
+    function sizeOfStr(field) {
+      return (has(field) && (request.resource.data[field] is string))
+        ? request.resource.data[field].size()
+        : 0;
+    }
+
+    /* ---------- Public reference (read-only) ---------- */
+    match /badges/{id}              { allow read: if true; allow write: if false; }
+    match /models/{ver}             { allow read: if true; allow write: if false; }
+    match /vitality_reference/{ver} { allow read: if true; allow write: if false; }
+    match /percentiles/{ver}        { allow read: if true; allow write: if false; }
+    match /tiers/{id}               { allow read: if true; allow write: if false; }
+    match /paywall/{id}             { allow read: if true; allow write: if false; }
+
+    /* =====================================================================
+       USERS (PRIMARY PROFILE DOCS)
+       ===================================================================== */
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      function _okString(field) {
+        return !has(field) || isNull(field) || (request.resource.data[field] is string);
+      }
+      function _okNumber(field) {
+        return !has(field) || isNull(field) || (request.resource.data[field] is number);
+      }
+      function _okBool(field) {
+        return !has(field) || isNull(field) || (request.resource.data[field] is bool);
+      }
+
+      // DOB: timestamp | map (SDK) | string (legacy) | null/absent
+      function _okDob() {
+        return !has('dob') ||
+               isNull('dob') ||
+               (request.resource.data.dob is timestamp) ||
+               (request.resource.data.dob is map) ||
+               (request.resource.data.dob is string);
+      }
+
+      function _okGender() {
+        return !has('gender') ||
+               isNull('gender') ||
+               (request.resource.data.gender in ['male','female','nonbinary','preferNotSay','other']);
+      }
+
+      // Accept username_lower (new) or username_lc (old), allow empty during migration
+      function _okUsernameLower() {
+        return
+          (
+            !has('username_lower') ||
+            isNull('username_lower') ||
+            (request.resource.data.username_lower is string &&
+             (request.resource.data.username_lower == '' ||
+              request.resource.data.username_lower.matches('^[a-z0-9_\\.]{3,24}$')))
+          )
+          &&
+          (
+            !has('username_lc') ||
+            isNull('username_lc') ||
+            (request.resource.data.username_lc is string &&
+             (request.resource.data.username_lc == '' ||
+              request.resource.data.username_lc.matches('^[a-z0-9_\\.]{3,24}$')))
+          );
+      }
+
+      // preferred_units: { length: 'cm'|'inch', weight: 'kg'|'lb' } or null/absent
+      function _okPreferredUnits() {
+        return !has('preferred_units') ||
+               isNull('preferred_units') ||
+               (
+                 request.resource.data.preferred_units is map &&
+                 (!('length' in request.resource.data.preferred_units) ||
+                   request.resource.data.preferred_units.length in ['cm','inch']) &&
+                 (!('weight' in request.resource.data.preferred_units) ||
+                   request.resource.data.preferred_units.weight in ['kg','lb'])
+               );
+      }
+
+      // sharing: optional map of optional bools
+      function _okSharing() {
+        return !has('sharing') ||
+               isNull('sharing') ||
+               (
+                 request.resource.data.sharing is map &&
+                 (!('share_anonymized' in request.resource.data.sharing) ||
+                   (request.resource.data.sharing.share_anonymized is bool)) &&
+                 (!('show_on_leaderboards' in request.resource.data.sharing) ||
+                   (request.resource.data.sharing.show_on_leaderboards is bool)) &&
+                 (!('receive_product_emails' in request.resource.data.sharing) ||
+                   (request.resource.data.sharing.receive_product_emails is bool))
+               );
+      }
+
+      // photo_url: empty or http(s) or null/absent
+      function _okPhotoUrl() {
+        return !has('photo_url') ||
+               isNull('photo_url') ||
+               (request.resource.data.photo_url is string &&
+                 (request.resource.data.photo_url == '' ||
+                  request.resource.data.photo_url.matches('^https?://')));
+      }
+
+      // Height/weight numbers or null/absent (UI uses tighter ranges; rules are tolerant)
+      function _okHeightsWeights() {
+        return (!has('height_cm') || isNull('height_cm') ||
+                  (request.resource.data.height_cm is number &&
+                   request.resource.data.height_cm >= 0 &&
+                   request.resource.data.height_cm <= 300)) &&
+               (!has('weight_kg') || isNull('weight_kg') ||
+                  (request.resource.data.weight_kg is number &&
+                   request.resource.data.weight_kg >= 0 &&
+                   request.resource.data.weight_kg <= 500));
+      }
+
+      // timestamps (serverTimestamp etc.) – allow anything/null (migration friendly)
+      function _okTimestamps() {
+        return (!has('created_at') || true) &&
+               (!has('updated_at') || true) &&
+               (!has('created_at_utc') || true) &&
+               (!has('updated_at_utc') || true);
+      }
+
+      function _commonProfileFieldChecks() {
+        return
+          _okString('uid') &&
+          _okString('email') &&
+          _okString('username') &&
+          _okUsernameLower() &&
+          _okString('first_name') &&
+          _okString('last_name') &&
+          _okDob() &&
+          _okGender() &&
+          _okHeightsWeights() &&
+          _okPreferredUnits() &&
+          _okSharing() &&
+          _okPhotoUrl() &&
+          _okTimestamps();
+      }
+
+      function _createMinimum() {
+        return has('first_name') && sizeOfStr('first_name') >= 2 &&
+               has('dob') && (
+                 (request.resource.data.dob is timestamp) ||
+                 (request.resource.data.dob is map) ||
+                 (request.resource.data.dob is string)
+               );
+      }
+
+      function isValidProfileCreate() {
+        return isOwner(uid) &&
+               _commonProfileFieldChecks() &&
+               _createMinimum() &&
+               (!has('uid') || isNull('uid') || request.resource.data.uid == uid);
+      }
+
+      function isValidProfileUpdate() {
+        return isOwner(uid) &&
+               _commonProfileFieldChecks() &&
+               (!has('uid') || isNull('uid') || request.resource.data.uid == uid);
+      }
+
+      allow create: if isValidProfileCreate();
+      allow update: if isValidProfileUpdate();
+      allow delete: if isOwner(uid) || isAdmin();
+
+      /* ---- User-owned subcollections under users/{uid} ---- */
+      match /notifications/{nid} {
+        allow read: if isOwner(uid);
+        allow create, update, delete: if isOwner(uid) && _notifFieldsOk();
+
+        function _notifFieldsOk() {
+          return
+            (!('type' in request.resource.data) || (request.resource.data.type is string)) &&
+            (!('category' in request.resource.data) || (request.resource.data.category is string)) &&
+            (!('severity' in request.resource.data) || (request.resource.data.severity is string)) &&
+            (!('title' in request.resource.data) || (request.resource.data.title is string)) &&
+            (!('body' in request.resource.data) || (request.resource.data.body is string)) &&
+            (!('icon' in request.resource.data) || (request.resource.data.icon is string)) &&
+            (!('route' in request.resource.data) || (request.resource.data.route is string)) &&
+            (!('route_args' in request.resource.data) || (request.resource.data.route_args is map)) &&
+            (!('source' in request.resource.data) || (request.resource.data.source is string)) &&
+            (!('created_at' in request.resource.data) || true) &&
+            (!('read_at' in request.resource.data) || true) &&
+            (!('archived_at' in request.resource.data) || true) &&
+            (!('sticky_until' in request.resource.data) || true) &&
+            (!('expires_at' in request.resource.data) || true);
+        }
+      }
+
+      match /{sub=**}/{doc} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    /* ---------- Legacy profiles (keep during migration) ---------- */
+    match /user_profiles/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update, delete: if isOwner(uid) || isAdmin();
+    }
+
+    /* ---------- Usernames (handle → uid map) ---------- */
+    match /usernames/{handle} {
+      allow read: if isAuthed();
+      allow create: if isAuthed()
+                    && handle.matches('^[a-z0-9_\\.]{3,24}$')
+                    && !exists(/databases/$(database)/documents/usernames/$(handle))
+                    && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    /* ---------- User Daily (OWNER-ONLY) ---------- */
+    match /user_daily/{uid} {
+      allow read, write: if isOwner(uid);
+      match /days/{dateId}           { allow read, write: if isOwner(uid); }
+      match /hydration_days/{dateId} { allow read, write: if isOwner(uid); }
+    }
+
+    /* ---------- User Events (audit log) ---------- */
+    match /user_events/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false; // backend/Admin SDK only
+      match /events/{eventId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    /* ---------- System runs (backend/admin) ---------- */
+    match /system_runs/{doc=**} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    /* ---------- Integrations status ---------- */
+    match /integrations/{provider}/users/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
+    /* ---------- Friends graph ---------- */
+    match /friends/{uid} {
+      allow read, write: if isOwner(uid);
+      match /{subcol}/{docId} { allow read, write: if isOwner(uid); }
+    }
+
+    /* ---------- Groups + members ---------- */
+    match /groups/{groupId} {
+      function isMember(u) {
+        return exists(/databases/$(database)/documents/groups/$(groupId)/members/$(u));
+      }
+      allow read: if isAuthed() && (resource.data.visibility == "public"
+               || isMember(request.auth.uid));
+      allow create, update: if isAuthed();
+      allow delete: if isAdmin();
+
+      match /members/{uid} {
+        allow read: if isAuthed();
+        allow create, update, delete: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    /* ---------- Challenges + participants ---------- */
+    match /challenges/{challengeId} {
+      function isParticipant(u) {
+        return exists(/databases/$(database)/documents/challenges/$(challengeId)/participants/$(u));
+      }
+      allow read: if isAuthed() && (resource.data.visibility == "public"
+               || isParticipant(request.auth.uid));
+      allow create, update: if isAuthed() || isAdmin();
+      allow delete: if isAdmin();
+
+      match /participants/{uid} {
+        allow read: if isAuthed();
+        allow create, update: if (isOwner(uid) || isAdmin())
+                              && (request.resource.data.progress.days_ok is int)
+                              && (request.resource.data.progress.days_ok >= 0);
+        allow delete: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    /* ---------- Community events + RSVPs ---------- */
+    match /community_events/{eventId} {
+      function isAttendee(u) {
+        return exists(/databases/$(database)/documents/community_events/$(eventId)/rsvps/$(u));
+      }
+      allow read: if isAuthed() && (resource.data.visibility == "public"
+               || isAttendee(request.auth.uid));
+      allow create, update: if isAuthed() || isAdmin();
+      allow delete: if isAdmin();
+
+      match /rsvps/{uid} {
+        allow read: if isAuthed();
+        allow create, update, delete: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    /* ---------- Leaderboards (backend built) ---------- */
+    match /leaderboards/{boardId} {
+      allow read: if isAuthed();
+      allow write: if false;
+      match /entries/{uid} {
+        allow read: if isAuthed();
+        allow write: if false;
+      }
+    }
+
+    /* ---------- Notifications + Invites (global patterns) ---------- */
+    match /notifications/{uid}/inbox/{notifId} {
+      allow read: if isOwner(uid);
+      allow update: if isOwner(uid);
+      allow create, delete: if false;
+    }
+    match /invites/{token} {
+      allow read: if isAuthed();
+      allow write: if false;
+    }
+
+    /* ---------- Default deny ---------- */
+    match /{document=**} { allow read, write: if false; }
+  }
+}

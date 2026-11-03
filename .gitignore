@@ -1,0 +1,42 @@
+# Flutter and Dart
+.dart_tool/
+.packages
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+flutter_*.log
+Generated.xcconfig
+pubspec.lock
+
+# IDEs and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Node and Firebase
+node_modules/
+.firebase/
+firebase-debug*.log
+firestore-debug.log
+ui-debug.log
+
+# Config and secrets
+.env
+.env.*
+.secret.local
+*.local
+passwords.txt
+dart_defines.json
+firebase.json
+.firebaserc
+flutterfire.json
+google-services.json
+GoogleService-Info.plist
+*.pem
+*.p12
+*.jks
+*.keystore
+key.properties
