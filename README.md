@@ -18,7 +18,7 @@ Aevara is a health tracking app that turns wearable data into one daily number, 
 - **Coaching text:** daily messages written from templates using the day's numbers. No AI model is involved.
 - **Demo mode:** a compile-time flag adds anonymous sign-in with sample data. The sample scores come from a demo-only port of the server's formulas, and a test feeds the same inputs through the real server functions to confirm they match. Security rules stop anonymous visitors from writing data or reading other users' data.
 
-Data, Experiments and Community are front-end features shown in demo mode on sample data; they don't have a backend yet. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for one open scoring question.
+Data, Experiments and Community are front-end features shown in demo mode on sample data; they aren't connected to the backend yet. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for one open scoring question.
 
 ## Engineering highlights
 
